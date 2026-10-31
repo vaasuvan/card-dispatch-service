@@ -12,6 +12,7 @@ public record CardDispatch(
         DeliveryPartner deliveryPartner,
         String trackingNumber,
         Instant dispatchedAt,
-        String idempotencyKey
+        String idempotencyKeyHash,
+        String requestFingerprint
 ) {
 }

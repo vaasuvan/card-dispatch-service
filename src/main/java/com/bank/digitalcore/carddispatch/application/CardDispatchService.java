@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
+import java.util.List;
 
 /**
  * Coordinates dispatch registration, partner lookups, and durable status snapshots.
@@ -33,16 +34,19 @@ public class CardDispatchService {
     private static final Logger log = LoggerFactory.getLogger(CardDispatchService.class);
     private final CardDispatchRepository repository;
     private final DeliveryPartnerRegistry partnerRegistry;
+    private final CardDispatchIdempotency idempotency;
 
     /**
      * Creates the application service using persistence and carrier-routing boundaries.
      */
     public CardDispatchService(
             CardDispatchRepository repository,
-            DeliveryPartnerRegistry partnerRegistry
+            DeliveryPartnerRegistry partnerRegistry,
+            CardDispatchIdempotency idempotency
     ) {
         this.repository = repository;
         this.partnerRegistry = partnerRegistry;
+        this.idempotency = idempotency;
     }
 
     /**
@@ -65,7 +69,8 @@ public class CardDispatchService {
         }
         var dispatchedAt = java.time.Instant.now();
         CardDispatch dispatch = new CardDispatch(UUID.randomUUID(), UNAUTHENTICATED_CUSTOMER_REFERENCE,
-                deliveryPartner, null, dispatchedAt, idempotencyKey.trim());
+                deliveryPartner, null, dispatchedAt, idempotency.fingerprint(idempotencyKey.trim()),
+                idempotency.requestFingerprint(request));
         BookingRegistration registration = repository.createBooking(dispatch);
         CardDispatch persisted = registration.dispatch();
         if (!registration.newlyCreated()) {
@@ -95,7 +100,18 @@ public class CardDispatchService {
     public TrackDispatchResponse track(UUID dispatchId) {
         CardDispatch dispatch = repository.find(dispatchId).orElseThrow(DispatchNotFoundException::new);
         log.debug("Card dispatch tracking requested deliveryPartner={}", dispatch.deliveryPartner());
-        boolean canceled = repository.findStatus(dispatchId) == DispatchStatus.CANCELED;
+        DispatchStatus status = repository.findStatus(dispatchId);
+        if (status == DispatchStatus.BOOKING_PENDING && dispatch.trackingNumber() == null) {
+            log.info("Carrier booking is still pending; returning local status dispatchId={}", dispatchId);
+            return new TrackDispatchResponse(dispatchId, status, "Shipment booking is pending",
+                    null, dispatch.dispatchedAt(), List.of());
+        }
+        if (dispatch.trackingNumber() == null && status != DispatchStatus.CANCELED) {
+            log.error("Dispatch has no carrier tracking number despite status dispatchId={} status={}",
+                    dispatchId, status);
+            throw new PartnerUnavailableException();
+        }
+        boolean canceled = status == DispatchStatus.CANCELED;
         TrackingSnapshot snapshot = canceled
                 ? repository.findSnapshot(dispatchId).orElseThrow(DispatchNotFoundException::new)
                 : partnerRegistry.track(dispatch);
@@ -118,8 +134,13 @@ public class CardDispatchService {
             return new CancelDispatchResponse(dispatchId, DispatchStatus.CANCELED, saved.lastUpdatedAt());
         }
         if (status == DispatchStatus.DELIVERED || status == DispatchStatus.RETURNED
-                || status == DispatchStatus.EXCEPTION) {
+                || status == DispatchStatus.EXCEPTION || status == DispatchStatus.BOOKING_PENDING) {
             throw new DispatchNotCancelableException();
+        }
+        if (dispatch.trackingNumber() == null) {
+            log.error("Cannot cancel dispatch without carrier tracking number dispatchId={} status={}",
+                    dispatchId, status);
+            throw new PartnerUnavailableException();
         }
         if (!partnerRegistry.supports(dispatch.deliveryPartner())) {
             log.warn("Card dispatch cancellation rejected because carrier is unavailable deliveryPartner={}",

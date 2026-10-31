@@ -37,15 +37,18 @@ public class JdbcCardDispatchRepository implements CardDispatchRepository {
         int inserted = jdbc.update("""
                         INSERT INTO card_dispatches
                             (dispatch_id, customer_reference, partner_code, tracking_number, dispatched_at,
-                             idempotency_key, current_status)
-                        VALUES (?, ?, ?, NULL, ?, ?, 'BOOKING_PENDING')
-                        ON CONFLICT (customer_reference, idempotency_key) DO NOTHING
+                             idempotency_key_hash, request_fingerprint, current_status)
+                        VALUES (?, ?, ?, NULL, ?, ?, ?, 'BOOKING_PENDING')
+                        ON CONFLICT (customer_reference, idempotency_key_hash) DO NOTHING
                         """, dispatch.dispatchId(), dispatch.customerReference(), dispatch.deliveryPartner().name(),
-                Timestamp.from(dispatch.dispatchedAt()), dispatch.idempotencyKey());
+                Timestamp.from(dispatch.dispatchedAt()), dispatch.idempotencyKeyHash(), dispatch.requestFingerprint());
         CardDispatch result = inserted == 1
                 ? find(dispatch.dispatchId()).orElseThrow(DispatchNotFoundException::new)
-                : findByIdempotencyKey(dispatch.customerReference(), dispatch.idempotencyKey())
+                : findByIdempotencyKey(dispatch.customerReference(), dispatch.idempotencyKeyHash())
                 .orElseThrow(DispatchNotFoundException::new);
+        if (inserted == 0 && !result.requestFingerprint().equals(dispatch.requestFingerprint())) {
+            throw new com.bank.digitalcore.carddispatch.domain.DispatchExceptions.DispatchConflictException();
+        }
         if (inserted == 1) {
             jdbc.update("""
                     INSERT INTO card_dispatch_events (dispatch_id, status, description, occurred_at)
@@ -80,11 +83,12 @@ public class JdbcCardDispatchRepository implements CardDispatchRepository {
     /**
      * Finds the pending or completed dispatch created with a customer-scoped idempotency key.
      */
-    private Optional<CardDispatch> findByIdempotencyKey(String customerReference, String idempotencyKey) {
+    private Optional<CardDispatch> findByIdempotencyKey(String customerReference, String idempotencyKeyHash) {
         return findOne("""
-                SELECT dispatch_id, customer_reference, partner_code, tracking_number, dispatched_at, idempotency_key
-                FROM card_dispatches WHERE customer_reference = ? AND idempotency_key = ?
-                """, customerReference, idempotencyKey);
+                SELECT dispatch_id, customer_reference, partner_code, tracking_number, dispatched_at,
+                       idempotency_key_hash, request_fingerprint
+                FROM card_dispatches WHERE customer_reference = ? AND idempotency_key_hash = ?
+                """, customerReference, idempotencyKeyHash);
     }
 
     /**
@@ -93,7 +97,8 @@ public class JdbcCardDispatchRepository implements CardDispatchRepository {
     @Override
     public Optional<CardDispatch> find(UUID dispatchId) {
         return findOne("""
-                SELECT dispatch_id, customer_reference, partner_code, tracking_number, dispatched_at, idempotency_key
+                SELECT dispatch_id, customer_reference, partner_code, tracking_number, dispatched_at,
+                       idempotency_key_hash, request_fingerprint
                 FROM card_dispatches WHERE dispatch_id = ?
                 """, dispatchId);
     }
@@ -105,7 +110,8 @@ public class JdbcCardDispatchRepository implements CardDispatchRepository {
                 DeliveryPartner.valueOf(rs.getString("partner_code")),
                 rs.getString("tracking_number"),
                 rs.getTimestamp("dispatched_at").toInstant(),
-                rs.getString("idempotency_key")
+                rs.getString("idempotency_key_hash"),
+                rs.getString("request_fingerprint")
         ), args);
         return result.stream().findFirst();
     }

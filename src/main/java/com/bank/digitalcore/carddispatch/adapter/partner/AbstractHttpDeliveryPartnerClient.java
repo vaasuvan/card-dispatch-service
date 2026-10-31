@@ -137,6 +137,10 @@ public abstract class AbstractHttpDeliveryPartnerClient implements DeliveryPartn
     @Override
     public final TrackingSnapshot track(CardDispatch dispatch) {
         CardDispatchProperties.Partner config = requiredConfig();
+        if (dispatch.trackingNumber() == null || dispatch.trackingNumber().isBlank()) {
+            log.warn("Cannot call carrier tracking without a tracking number partner={}", partner);
+            throw new PartnerUnavailableException();
+        }
         try {
             CarrierTrackingResponse response = client(config).get()
                     .uri(endpoint(config.getTrackingPath(), dispatch.trackingNumber()))
@@ -171,6 +175,10 @@ public abstract class AbstractHttpDeliveryPartnerClient implements DeliveryPartn
     @Override
     public final void cancel(CardDispatch dispatch) {
         CardDispatchProperties.Partner config = requiredConfig();
+        if (dispatch.trackingNumber() == null || dispatch.trackingNumber().isBlank()) {
+            log.warn("Cannot call carrier cancellation without a tracking number partner={}", partner);
+            throw new PartnerUnavailableException();
+        }
         try {
             client(config).delete()
                     .uri(endpoint(config.getCancellationPath(), dispatch.trackingNumber()))

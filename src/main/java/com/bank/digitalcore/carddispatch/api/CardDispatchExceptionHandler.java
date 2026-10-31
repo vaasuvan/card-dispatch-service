@@ -15,6 +15,8 @@ import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import java.sql.SQLException;
+
 import static com.bank.digitalcore.carddispatch.api.CardDispatchConstants.*;
 
 /**
@@ -93,12 +95,18 @@ public class CardDispatchExceptionHandler {
                 "Request validation failed", request);
     }
 
-    /**
-     * Returns a temporary storage failure while logging no SQL or customer data.
-     */
+    /** Returns a generic storage failure while recording database diagnostics in server logs only. */
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<CardDispatchApiError> storageUnavailable(DataAccessException exception, WebRequest request) {
-        log.error("Card dispatch database operation failed errorType={}", exception.getClass().getSimpleName());
+        SQLException sqlException = findSqlException(exception);
+        if (sqlException == null) {
+            log.error("Card dispatch database operation failed errorType={}",
+                    exception.getClass().getSimpleName(), exception);
+        } else {
+            log.error("Card dispatch database operation failed errorType={} sqlState={} vendorCode={}",
+                    exception.getClass().getSimpleName(), sqlException.getSQLState(),
+                    sqlException.getErrorCode(), exception);
+        }
         return response(HttpStatus.SERVICE_UNAVAILABLE, ERROR_STORAGE_UNAVAILABLE,
                 "Card dispatch service is temporarily unavailable", request);
     }
@@ -108,7 +116,10 @@ public class CardDispatchExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<CardDispatchApiError> internalError(Exception exception, WebRequest request) {
-        log.error("Unhandled card dispatch API error errorType={}", exception.getClass().getSimpleName());
+        String method = request instanceof ServletWebRequest servletRequest
+                ? servletRequest.getRequest().getMethod() : "UNKNOWN";
+        log.error("Unhandled card dispatch API error method={} path={} errorType={}",
+                method, requestPath(request), exception.getClass().getSimpleName(), exception);
         return response(HttpStatus.INTERNAL_SERVER_ERROR, ERROR_INTERNAL,
                 "An unexpected error occurred", request);
     }
@@ -127,5 +138,16 @@ public class CardDispatchExceptionHandler {
     private String requestPath(WebRequest request) {
         return request instanceof ServletWebRequest servletRequest
                 ? servletRequest.getRequest().getRequestURI() : "/";
+    }
+
+    private SQLException findSqlException(Throwable exception) {
+        Throwable cause = exception;
+        while (cause != null) {
+            if (cause instanceof SQLException sqlException) {
+                return sqlException;
+            }
+            cause = cause.getCause();
+        }
+        return null;
     }
 }

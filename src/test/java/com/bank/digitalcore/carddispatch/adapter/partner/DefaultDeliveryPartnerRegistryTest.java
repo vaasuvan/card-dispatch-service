@@ -71,6 +71,6 @@ class DefaultDeliveryPartnerRegistryTest {
 
     private CardDispatch dispatch(DeliveryPartner partner) {
         return new CardDispatch(UUID.randomUUID(), "customer-reference", partner, "tracking-reference",
-                Instant.parse("2026-10-30T08:00:00Z"), "request-key");
+                Instant.parse("2026-10-30T08:00:00Z"), "request-key-hash", "request-fingerprint");
     }
 }

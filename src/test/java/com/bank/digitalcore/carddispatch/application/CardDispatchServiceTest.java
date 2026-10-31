@@ -1,5 +1,6 @@
 package com.bank.digitalcore.carddispatch.application;
 
+import com.bank.digitalcore.carddispatch.adapter.partner.CardDispatchProperties;
 import com.bank.digitalcore.carddispatch.api.CancelDispatchResponse;
 import com.bank.digitalcore.carddispatch.api.CreateDispatchRequest;
 import com.bank.digitalcore.carddispatch.api.CreateDispatchResponse;
@@ -37,8 +38,10 @@ import static org.mockito.Mockito.*;
 class CardDispatchServiceTest {
     private final CardDispatchRepository repository = mock(CardDispatchRepository.class);
     private final DeliveryPartnerRegistry partnerRegistry = mock(DeliveryPartnerRegistry.class);
+    private final CardDispatchProperties properties = configuredProperties();
+    private final CardDispatchIdempotency idempotency = new CardDispatchIdempotency(properties);
     private final CardDispatchService service =
-            new CardDispatchService(repository, partnerRegistry);
+            new CardDispatchService(repository, partnerRegistry, idempotency);
 
     /** Books through the selected partner without exposing its tracking reference in the response. */
     @Test
@@ -132,6 +135,22 @@ class CardDispatchServiceTest {
         verify(repository, never()).saveSnapshot(any());
     }
 
+    @Test
+    void trackingPendingBookingReturnsPendingStatusWithoutCallingCarrier() {
+        UUID id = UUID.randomUUID();
+        CardDispatch pending = new CardDispatch(id, "customer-1", DeliveryPartner.DHL, null,
+                Instant.parse("2026-10-30T08:00:00Z"), "request-key-hash", "request-fingerprint");
+        when(repository.find(id)).thenReturn(Optional.of(pending));
+        when(repository.findStatus(id)).thenReturn(DispatchStatus.BOOKING_PENDING);
+
+        TrackDispatchResponse response = service.track(id);
+
+        assertEquals(DispatchStatus.BOOKING_PENDING, response.status());
+        assertEquals("Shipment booking is pending", response.statusDescription());
+        verify(partnerRegistry, never()).track(any());
+        verify(repository, never()).saveSnapshot(any());
+    }
+
     /**
      * Tracks a dispatch without requiring customer identity.
      */
@@ -220,7 +239,7 @@ class CardDispatchServiceTest {
 
     private CardDispatch dispatch(UUID id, String customerReference) {
         return new CardDispatch(id, customerReference, DeliveryPartner.DHL, "tracking-reference",
-                Instant.parse("2026-10-30T08:00:00Z"), "request-key");
+                Instant.parse("2026-10-30T08:00:00Z"), "request-key-hash", "request-fingerprint");
     }
 
     private CreateDispatchRequest request() {
@@ -233,5 +252,11 @@ class CardDispatchServiceTest {
                         null, "00100", "LK", "+94112345678"),
                 new ShipmentDetails(new BigDecimal("0.2"), new BigDecimal("10"),
                         new BigDecimal("8"), new BigDecimal("2")));
+    }
+
+    private CardDispatchProperties configuredProperties() {
+        CardDispatchProperties configured = new CardDispatchProperties();
+        configured.setIdempotencyHmacKey("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=");
+        return configured;
     }
 }
