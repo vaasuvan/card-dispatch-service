@@ -1,0 +1,117 @@
+spring:
+  application:
+    name: ${SERVICE_NAME:card-dispatch-service}
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/card_dispatch}
+    username: ${DB_USERNAME:wasuvan}
+    password: ${DB_PASSWORD:Vaasu@123}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 3000
+  flyway:
+    enabled: true
+    validate-on-migrate: true
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  security:
+    oauth2:
+      client:
+        registration:
+          dhl:
+            provider: dhl-provider
+            client-id: ${DHL_OAUTH_CLIENT_ID:not-configured}
+            client-secret: ${DHL_OAUTH_CLIENT_SECRET:not-configured}
+            authorization-grant-type: client_credentials
+            scope: ${DHL_OAUTH_SCOPE:tracking.read}
+          fedex:
+            provider: fedex-provider
+            client-id: ${FEDEX_OAUTH_CLIENT_ID:not-configured}
+            client-secret: ${FEDEX_OAUTH_CLIENT_SECRET:not-configured}
+            authorization-grant-type: client_credentials
+            scope: ${FEDEX_OAUTH_SCOPE:tracking.read}
+          aramex:
+            provider: aramex-provider
+            client-id: ${ARAMEX_OAUTH_CLIENT_ID:not-configured}
+            client-secret: ${ARAMEX_OAUTH_CLIENT_SECRET:not-configured}
+            authorization-grant-type: client_credentials
+            scope: ${ARAMEX_OAUTH_SCOPE:tracking.read}
+        provider:
+          dhl-provider:
+            token-uri: ${DHL_OAUTH_TOKEN_URI:https://identity.example.invalid/dhl/oauth2/token}
+          fedex-provider:
+            token-uri: ${FEDEX_OAUTH_TOKEN_URI:https://identity.example.invalid/fedex/oauth2/token}
+          aramex-provider:
+            token-uri: ${ARAMEX_OAUTH_TOKEN_URI:https://identity.example.invalid/aramex/oauth2/token}
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  max-http-request-header-size: 16KB
+card-dispatch:
+  idempotency-hmac-key: ${CARD_DISPATCH_IDEMPOTENCY_HMAC_KEY:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+  connect-timeout-ms: ${PARTNER_CONNECT_TIMEOUT_MS:3000}
+  read-timeout-ms: ${PARTNER_READ_TIMEOUT_MS:5000}
+  max-events: ${PARTNER_MAX_EVENTS:50}
+  partners:
+    dhl:
+      enabled: ${DHL_ENABLED:true}
+      base-url: ${DHL_TRACKING_BASE_URL:https://www.dhl.com}
+      booking-path: ${DHL_BOOKING_PATH:/api/v1/shipments/{dispatchId}}
+      tracking-path: ${DHL_TRACKING_PATH:/api/v1/trackings/{trackingNumber}}
+      cancellation-path: ${DHL_CANCELLATION_PATH:/api/v1/trackings/{trackingNumber}}
+      oauth2-registration-id: dhl
+      status-mappings:
+        PICKED_UP: IN_TRANSIT
+        TRANSIT: IN_TRANSIT
+        OUT_FOR_DELIVERY: OUT_FOR_DELIVERY
+        DELIVERED: DELIVERED
+        DELIVERY_ATTEMPTED: DELIVERY_ATTEMPTED
+        RETURNED: RETURNED
+    fedex:
+      enabled: ${FEDEX_ENABLED:true}
+      base-url: ${FEDEX_TRACKING_BASE_URL:https://www.fedex.com}
+      booking-path: ${FEDEX_BOOKING_PATH:/api/v1/shipments/{dispatchId}}
+      tracking-path: ${FEDEX_TRACKING_PATH:/api/v1/trackings/{trackingNumber}}
+      cancellation-path: ${FEDEX_CANCELLATION_PATH:/api/v1/trackings/{trackingNumber}}
+      oauth2-registration-id: fedex
+      status-mappings:
+        PU: IN_TRANSIT
+        IT: IN_TRANSIT
+        OD: OUT_FOR_DELIVERY
+        DL: DELIVERED
+        DE: EXCEPTION
+        SE: EXCEPTION
+    aramex:
+      enabled: ${ARAMEX_ENABLED:true}
+      base-url: ${ARAMEX_TRACKING_BASE_URL:https://www.aramex.com}
+      booking-path: ${ARAMEX_BOOKING_PATH:/api/v1/shipments/{dispatchId}}
+      tracking-path: ${ARAMEX_TRACKING_PATH:/api/v1/trackings/{trackingNumber}}
+      cancellation-path: ${ARAMEX_CANCELLATION_PATH:/api/v1/trackings/{trackingNumber}}
+      oauth2-registration-id: aramex
+      status-mappings:
+        INTRANSIT: IN_TRANSIT
+        OUTFORDELIVERY: OUT_FOR_DELIVERY
+        DELIVERED: DELIVERED
+        DELIVERYATTEMPT: DELIVERY_ATTEMPTED
+        EXCEPTION: EXCEPTION
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+logging:
+  level:
+    root: INFO
+    com.bank.digitalcore: INFO
+  pattern:
+    level: "%5p [corr=%X{correlationId:-},trace=%X{traceId:-}]"

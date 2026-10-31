@@ -1,0 +1,22 @@
+description: Card Dispatch API contract smoke tests
+
+prompts:
+  - "Retrieve the latest status for this card dispatch."
+
+providers:
+  - id: "{{env.CARD_DISPATCH_API_BASE_URL}}/api/v1/card-dispatches/{{dispatchId}}/tracking"
+    config:
+      method: GET
+      headers:
+        X-Correlation-Id: "promptfoo-{{evaluationId}}"
+      transformResponse: "file://promptfoo/transform-response.js"
+
+tests:
+  - description: Tracking endpoint is available without caller authentication
+    vars:
+      dispatchId: "{{env.PROMPTFOO_DISPATCH_ID}}"
+    assert:
+      - type: javascript
+        value: "file://promptfoo/assertions/tracking-contract.js"
+        config:
+          expectedStatus: 200
