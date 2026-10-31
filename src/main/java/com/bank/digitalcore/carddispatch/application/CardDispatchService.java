@@ -50,7 +50,8 @@ public class CardDispatchService {
     }
 
     /**
-     * Creates a dispatch with a bank-owned identifier and immutable API receipt.
+     * Persists the pending dispatch, then books with the selected carrier synchronously.
+     * Existing idempotency keys are returned without another carrier booking attempt.
      */
     public CreateDispatchResponse createDispatch(
             CreateDispatchRequest request,
@@ -74,6 +75,7 @@ public class CardDispatchService {
         BookingRegistration registration = repository.createBooking(dispatch);
         CardDispatch persisted = registration.dispatch();
         if (!registration.newlyCreated()) {
+            // The original booking may have reached the carrier; replaying it could create a duplicate shipment.
             DispatchStatus savedStatus = repository.findStatus(persisted.dispatchId());
             log.info("Idempotent card dispatch replay deliveryPartner={} status={}",
                     deliveryPartner, savedStatus);
@@ -81,18 +83,21 @@ public class CardDispatchService {
                     savedStatus == DispatchStatus.BOOKING_PENDING);
         }
         try {
+            // The remote call happens only after the pending row commits, so a process failure is recoverable by ID.
             CarrierBooking booking = partnerRegistry.book(persisted, request.recipient(), request.shipment());
             repository.completeBooking(persisted.dispatchId(), booking);
             log.info("Card shipment booked deliveryPartner={} status={}", deliveryPartner, DispatchStatus.DISPATCHED);
             return new CreateDispatchResponse(persisted.dispatchId(), DispatchStatus.DISPATCHED,
                     persisted.dispatchedAt(), false);
         } catch (PartnerUnavailableException exception) {
+            // A timeout can hide a successful carrier booking; leave it pending rather than retrying unsafely.
             log.warn("Carrier booking outcome unresolved; dispatch remains pending partner={} errorType={}",
                     deliveryPartner, exception.getClass().getSimpleName());
             return new CreateDispatchResponse(persisted.dispatchId(), DispatchStatus.BOOKING_PENDING,
                     persisted.dispatchedAt(), true);
         }
     }
+
 
     /**
      * Resolves the selected carrier, refreshes the snapshot, and returns the stable bank view.
@@ -102,6 +107,7 @@ public class CardDispatchService {
         log.debug("Card dispatch tracking requested deliveryPartner={}", dispatch.deliveryPartner());
         DispatchStatus status = repository.findStatus(dispatchId);
         if (status == DispatchStatus.BOOKING_PENDING && dispatch.trackingNumber() == null) {
+            // The carrier has not returned a tracking number yet; tracking cannot be queried by AWB/reference.
             log.info("Carrier booking is still pending; returning local status dispatchId={}", dispatchId);
             return new TrackDispatchResponse(dispatchId, status, "Shipment booking is pending",
                     null, dispatch.dispatchedAt(), List.of());

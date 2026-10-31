@@ -29,7 +29,8 @@ public class JdbcCardDispatchRepository implements CardDispatchRepository {
     }
 
     /**
-     * Writes a pending record before calling a carrier, and reuses an existing idempotency key.
+     * Commits a pending row before the application makes its carrier call.
+     * A duplicate key returns the existing row so callers do not repeat an uncertain booking.
      */
     @Override
     @Transactional
